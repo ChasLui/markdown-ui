@@ -1,6 +1,6 @@
 {
   "name": "@markdown-ui/vanilla",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Vanilla JS renderer for markdown-ui",
   "type": "module",
   "main": "./dist/index.umd.js",
