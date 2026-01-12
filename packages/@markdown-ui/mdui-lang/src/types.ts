@@ -119,3 +119,31 @@ export interface ParseResult {
   widget?: Widget;
   error?: string;
 }
+
+/**
+ * Result from streaming-aware parsing.
+ * Provides partial widget data even when input is incomplete.
+ */
+export interface StreamingParseResult {
+  /** Whether parsing completed successfully with all required fields */
+  complete: boolean;
+  /** Detected widget type (available even for incomplete input) */
+  detectedType?: string;
+  /** Partial or complete widget data */
+  widget?: Partial<Widget> & { type: string };
+  /** What's still needed to complete parsing */
+  pending?: {
+    /** True if we're waiting for an unclosed bracket */
+    unclosedBracket?: boolean;
+    /** True if we're waiting for an unclosed quote */
+    unclosedQuote?: boolean;
+    /** True if we're waiting for more questions in a quiz */
+    awaitingQuestions?: boolean;
+    /** True if we're waiting for more fields in a form */
+    awaitingFields?: boolean;
+    /** True if we're waiting for more CSV data in a chart */
+    awaitingData?: boolean;
+  };
+  /** Error message if parsing failed completely */
+  error?: string;
+}

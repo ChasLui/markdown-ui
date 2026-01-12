@@ -1,3 +1,9 @@
+// Known widget types for early detection
+const WIDGET_TYPES = [
+    'text-input', 'button-group', 'select', 'select-multi', 'slider',
+    'form', 'chart-line', 'chart-bar', 'chart-pie', 'chart-scatter',
+    'multiple-choice-question', 'short-answer-question', 'quiz'
+];
 export class DSLParser {
     parse(input) {
         try {
@@ -79,11 +85,71 @@ export class DSLParser {
         }
         return tokens;
     }
+    /**
+     * Normalize array syntax to handle common AI output variations.
+     * Converts formats like ["a","b","c"] or ["a", "b", "c"] to ["a" "b" "c"]
+     */
+    normalizeArraySyntax(arrayToken) {
+        if (!arrayToken.startsWith('[') || !arrayToken.endsWith(']')) {
+            return arrayToken;
+        }
+        const content = arrayToken.slice(1, -1).trim();
+        if (!content)
+            return '[]';
+        // Strategy: Parse the content handling both comma and space separators,
+        // with or without quotes, then reconstruct in canonical format
+        const items = [];
+        let current = '';
+        let inQuotes = false;
+        let quoteChar = '';
+        let i = 0;
+        while (i < content.length) {
+            const char = content[i];
+            // Handle both single and double quotes
+            if ((char === '"' || char === "'") && !inQuotes) {
+                inQuotes = true;
+                quoteChar = char;
+                i++;
+                continue;
+            }
+            if (char === quoteChar && inQuotes) {
+                inQuotes = false;
+                quoteChar = '';
+                i++;
+                continue;
+            }
+            // Comma or space outside quotes = separator
+            if ((char === ',' || char === ' ') && !inQuotes) {
+                if (current.trim()) {
+                    items.push(current.trim());
+                    current = '';
+                }
+                i++;
+                continue;
+            }
+            current += char;
+            i++;
+        }
+        if (current.trim()) {
+            items.push(current.trim());
+        }
+        // Reconstruct in canonical format: [item1 item2 item3]
+        // Quote items that contain spaces
+        const normalized = items.map(item => {
+            if (item.includes(' ')) {
+                return `"${item}"`;
+            }
+            return item;
+        }).join(' ');
+        return `[${normalized}]`;
+    }
     parseArray(arrayToken) {
         if (!arrayToken.startsWith('[') || !arrayToken.endsWith(']')) {
             throw new Error('Invalid array format');
         }
-        const content = arrayToken.slice(1, -1).trim();
+        // First normalize the array syntax to handle AI variations
+        const normalizedToken = this.normalizeArraySyntax(arrayToken);
+        const content = normalizedToken.slice(1, -1).trim();
         if (!content)
             return [];
         // Parse array content with support for quoted strings
@@ -539,8 +605,371 @@ export class DSLParser {
         }
         return { success: true, widget };
     }
+    /**
+     * Streaming-aware parsing that returns partial results for incomplete input.
+     * This is designed for AI streaming scenarios where content arrives incrementally.
+     */
+    parseStreaming(input) {
+        const trimmedInput = input.trim();
+        if (!trimmedInput) {
+            return { complete: false, error: "Empty input" };
+        }
+        // Check for unclosed brackets or quotes
+        const pending = this.detectPendingState(trimmedInput);
+        // Try to detect widget type from first token
+        const firstSpaceOrNewline = trimmedInput.search(/[\s\n]/);
+        const firstToken = firstSpaceOrNewline > 0
+            ? trimmedInput.substring(0, firstSpaceOrNewline)
+            : trimmedInput;
+        const detectedType = WIDGET_TYPES.includes(firstToken) ? firstToken : undefined;
+        // If we can't even detect the type yet, return early
+        if (!detectedType) {
+            // Check if it might be a partial type name
+            const partialMatch = WIDGET_TYPES.find(t => t.startsWith(firstToken));
+            if (partialMatch && firstToken.length < partialMatch.length) {
+                return {
+                    complete: false,
+                    pending: { unclosedQuote: false, unclosedBracket: false }
+                };
+            }
+            return { complete: false, error: `Unknown widget type: ${firstToken}` };
+        }
+        // If there are pending unclosed brackets/quotes, try partial parsing
+        if (pending.unclosedBracket || pending.unclosedQuote) {
+            return this.parsePartialWidget(trimmedInput, detectedType, pending);
+        }
+        // Try full parsing
+        const result = this.parse(trimmedInput);
+        if (result.success && result.widget) {
+            return {
+                complete: true,
+                detectedType,
+                widget: result.widget
+            };
+        }
+        // Full parse failed, try partial parsing
+        return this.parsePartialWidget(trimmedInput, detectedType, pending);
+    }
+    /**
+     * Detect if input has unclosed brackets or quotes
+     */
+    detectPendingState(input) {
+        let inQuotes = false;
+        let quoteChar = '';
+        let bracketDepth = 0;
+        for (let i = 0; i < input.length; i++) {
+            const char = input[i];
+            if ((char === '"' || char === "'") && !inQuotes) {
+                inQuotes = true;
+                quoteChar = char;
+            }
+            else if (char === quoteChar && inQuotes) {
+                inQuotes = false;
+                quoteChar = '';
+            }
+            else if (char === '[' && !inQuotes) {
+                bracketDepth++;
+            }
+            else if (char === ']' && !inQuotes) {
+                bracketDepth--;
+            }
+        }
+        return {
+            unclosedBracket: bracketDepth > 0,
+            unclosedQuote: inQuotes
+        };
+    }
+    /**
+     * Parse widget with incomplete input, filling in defaults for missing parts
+     */
+    parsePartialWidget(input, detectedType, pending) {
+        // For quiz, try to extract what we can
+        if (detectedType === 'quiz') {
+            return this.parsePartialQuiz(input, pending);
+        }
+        // For form, try to extract what we can
+        if (detectedType === 'form') {
+            return this.parsePartialForm(input, pending);
+        }
+        // For charts, try to extract what we can
+        if (detectedType.startsWith('chart-')) {
+            return this.parsePartialChart(input, detectedType, pending);
+        }
+        // For simple widgets, try to complete arrays if needed
+        if (pending.unclosedBracket) {
+            const completedInput = this.autoCompleteArrays(input);
+            const result = this.parse(completedInput);
+            if (result.success && result.widget) {
+                return {
+                    complete: false,
+                    detectedType,
+                    widget: result.widget,
+                    pending: { unclosedBracket: true }
+                };
+            }
+        }
+        // Return minimal partial widget
+        const lines = input.split('\n');
+        const tokens = this.tokenize(lines[0]);
+        return {
+            complete: false,
+            detectedType,
+            widget: {
+                type: detectedType,
+                id: tokens[1] || 'pending'
+            },
+            pending
+        };
+    }
+    /**
+     * Auto-complete unclosed arrays by adding closing bracket
+     */
+    autoCompleteArrays(input) {
+        let result = input;
+        let bracketDepth = 0;
+        let inQuotes = false;
+        let quoteChar = '';
+        for (const char of input) {
+            if ((char === '"' || char === "'") && !inQuotes) {
+                inQuotes = true;
+                quoteChar = char;
+            }
+            else if (char === quoteChar && inQuotes) {
+                inQuotes = false;
+                quoteChar = '';
+            }
+            else if (char === '[' && !inQuotes) {
+                bracketDepth++;
+            }
+            else if (char === ']' && !inQuotes) {
+                bracketDepth--;
+            }
+        }
+        // Close unclosed quotes first
+        if (inQuotes) {
+            result += quoteChar;
+        }
+        // Close unclosed brackets
+        while (bracketDepth > 0) {
+            result += ']';
+            bracketDepth--;
+        }
+        return result;
+    }
+    /**
+     * Parse partial quiz, extracting whatever questions are complete
+     */
+    parsePartialQuiz(input, pending) {
+        const lines = input.split('\n');
+        const firstTokens = this.tokenize(lines[0]);
+        const widget = {
+            type: 'quiz',
+            id: firstTokens[1] || 'pending',
+            title: firstTokens[2] || 'Loading...',
+            questions: [],
+            showScore: true,
+            showProgress: true,
+            _streaming: true // Mark as streaming for UI
+        };
+        let i = 1;
+        // Parse config lines
+        while (i < lines.length) {
+            const line = lines[i].trim();
+            if (!line) {
+                i++;
+                continue;
+            }
+            if (line.includes(':')) {
+                const colonIndex = line.indexOf(':');
+                const key = line.substring(0, colonIndex).trim().toLowerCase();
+                const value = line.substring(colonIndex + 1).trim();
+                switch (key) {
+                    case 'showscore':
+                        widget.showScore = value.toLowerCase() === 'true';
+                        break;
+                    case 'showprogress':
+                        widget.showProgress = value.toLowerCase() === 'true';
+                        break;
+                    case 'passingscore':
+                        const score = parseInt(value);
+                        if (!isNaN(score))
+                            widget.passingScore = score;
+                        break;
+                }
+                i++;
+            }
+            else {
+                break;
+            }
+        }
+        // Parse questions, handling incomplete ones gracefully
+        while (i < lines.length) {
+            const line = lines[i].trim();
+            if (!line) {
+                i++;
+                continue;
+            }
+            const question = this.parsePartialQuestion(line, i);
+            if (question) {
+                widget.questions.push(question);
+            }
+            i++;
+        }
+        return {
+            complete: false,
+            detectedType: 'quiz',
+            widget,
+            pending: {
+                ...pending,
+                awaitingQuestions: widget.questions.length === 0
+            }
+        };
+    }
+    /**
+     * Parse a single question line, handling incomplete input
+     */
+    parsePartialQuestion(line, lineNum) {
+        // Auto-complete the line if needed
+        const completedLine = this.autoCompleteArrays(line);
+        try {
+            const tokens = this.tokenize(completedLine);
+            if (tokens.length === 0)
+                return null;
+            const questionType = tokens[0];
+            if (questionType === 'mcq') {
+                return {
+                    id: tokens[1] || `q${lineNum}`,
+                    type: 'mcq',
+                    question: tokens[2] || 'Loading question...',
+                    points: parseInt(tokens[3]) || 0,
+                    choices: tokens[4] ? this.parseArray(tokens[4]) : [],
+                    correctAnswer: tokens[5],
+                    _streaming: tokens.length < 5 // Mark incomplete
+                };
+            }
+            if (questionType === 'short-answer') {
+                const question = {
+                    id: tokens[1] || `q${lineNum}`,
+                    type: 'short-answer',
+                    question: tokens[2] || 'Loading question...',
+                    points: parseInt(tokens[3]) || 0,
+                    _streaming: tokens.length < 4
+                };
+                if (tokens[4])
+                    question.placeholder = tokens[4];
+                if (tokens[5]) {
+                    try {
+                        question.correctAnswers = tokens[5].startsWith('[')
+                            ? this.parseArray(tokens[5])
+                            : [tokens[5]];
+                    }
+                    catch { /* ignore */ }
+                }
+                return question;
+            }
+        }
+        catch {
+            // Return partial question on parse error
+            const partialTokens = line.split(/\s+/);
+            if (partialTokens[0] === 'mcq' || partialTokens[0] === 'short-answer') {
+                return {
+                    id: partialTokens[1] || `q${lineNum}`,
+                    type: partialTokens[0] === 'mcq' ? 'mcq' : 'short-answer',
+                    question: 'Loading...',
+                    points: 0,
+                    choices: partialTokens[0] === 'mcq' ? [] : undefined,
+                    _streaming: true
+                };
+            }
+        }
+        return null;
+    }
+    /**
+     * Parse partial form
+     */
+    parsePartialForm(input, pending) {
+        const lines = input.split('\n');
+        const firstTokens = this.tokenize(lines[0]);
+        const widget = {
+            type: 'form',
+            id: firstTokens[1] || 'pending',
+            submitLabel: firstTokens[2],
+            fields: [],
+            _streaming: true
+        };
+        // Parse indented fields
+        for (let i = 1; i < lines.length; i++) {
+            const line = lines[i];
+            if (line.startsWith('  ')) {
+                const fieldLine = this.autoCompleteArrays(line.slice(2));
+                try {
+                    const fieldResult = this.parse(fieldLine);
+                    if (fieldResult.success && fieldResult.widget) {
+                        widget.fields.push(fieldResult.widget);
+                    }
+                }
+                catch { /* skip incomplete fields */ }
+            }
+        }
+        return {
+            complete: false,
+            detectedType: 'form',
+            widget,
+            pending: {
+                ...pending,
+                awaitingFields: true
+            }
+        };
+    }
+    /**
+     * Parse partial chart
+     */
+    parsePartialChart(input, detectedType, pending) {
+        const lines = input.split('\n');
+        const firstTokens = this.tokenize(lines[0]);
+        const widget = {
+            type: detectedType,
+            id: firstTokens[1] || 'pending',
+            title: firstTokens[2],
+            labels: [],
+            datasets: [],
+            _streaming: true
+        };
+        // Try to parse any complete CSV rows
+        let csvStarted = false;
+        for (let i = 1; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line)
+                continue;
+            if (line.includes(':') && !csvStarted) {
+                // Config line
+                const [key, value] = line.split(':').map(s => s.trim());
+                if (key.toLowerCase() === 'title')
+                    widget.title = value;
+                if (key.toLowerCase() === 'id')
+                    widget.id = value;
+            }
+            else if (line.includes(',')) {
+                csvStarted = true;
+                // CSV data - just mark that we have data coming
+            }
+        }
+        return {
+            complete: false,
+            detectedType,
+            widget,
+            pending: {
+                ...pending,
+                awaitingData: true
+            }
+        };
+    }
 }
 export function parseDSL(input) {
     const parser = new DSLParser();
     return parser.parse(input);
+}
+export function parseDSLStreaming(input) {
+    const parser = new DSLParser();
+    return parser.parseStreaming(input);
 }

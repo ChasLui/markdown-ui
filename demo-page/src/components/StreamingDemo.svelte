@@ -4,13 +4,14 @@
 	import '@markdown-ui/svelte/widgets.css';
 
 	import { Marked } from 'marked';
-	import { markedUiExtension } from '@markdown-ui/marked-ext';
+	import { markedUiStreamingExtension } from '@markdown-ui/marked-ext';
 
 	import { Pane, PaneGroup, PaneResizer } from 'paneforge';
 
-	// Setup marked with the markdown-ui extension
+	// Setup marked with the streaming-aware markdown-ui extension
+	// This extension handles incomplete widget definitions gracefully during AI streaming
 	const marked = new Marked();
-	marked.use(markedUiExtension);
+	marked.use(markedUiStreamingExtension);
 
 	let streamedContent = $state('');
 	let isStreaming = $state(false);
@@ -18,31 +19,47 @@
 
 	const fullContent = `# Interactive Content Creation Demo
 
-This demonstrates how markdown-ui enables real-time streaming of interactive content. 
+This demonstrates how markdown-ui enables real-time streaming of interactive content with **no flickering** even during AI generation.
 
 ## User Preferences
 
 \`\`\`markdown-ui-widget
-{ "type": "select", "id": "theme", "label": "Theme Preference", "choices": ["Light", "Dark", "Auto"], "default": "Auto" }
+button-group theme [Light Dark Auto] Auto
 \`\`\`
 
 \`\`\`markdown-ui-widget
-{ "type": "button-group", "id": "experience", "label": "Experience Level", "choices": ["Beginner", "Intermediate", "Advanced"], "default": "Intermediate" }
+button-group experience [Beginner Intermediate Advanced] Intermediate
 \`\`\`
 
-## Notification Preferences
+## Quick Knowledge Check
+
+Watch how the quiz renders progressively as content streams in:
 
 \`\`\`markdown-ui-widget
-{ "type": "text-input", "id": "email", "label": "Email Address", "placeholder": "your.email@example.com" }
+quiz streaming-demo "Streaming Quiz Demo"
+showScore: true
+showProgress: true
+mcq q1 "What technology does this demo showcase?" 10 ["React" "Svelte" "Vue" "All of the above"] "All of the above"
+mcq q2 "What problem does streaming-aware parsing solve?" 10 ["Flickering UI" "Slow rendering" "Memory leaks" "Network errors"] "Flickering UI"
+short-answer q3 "What file extension is used for markdown-ui widgets?" 10 "" [".md" "md" "markdown"]
+\`\`\`
+
+## Notification Settings
+
+\`\`\`markdown-ui-widget
+text-input email "Email Address" "your.email@example.com"
 \`\`\`
 
 \`\`\`markdown-ui-widget
-{ "type": "button-group", "id": "frequency", "label": "Update Frequency", "choices": ["Real-time", "Daily", "Weekly", "Monthly"], "default": "Weekly" }
+button-group frequency ["Real-time" Daily Weekly Monthly] Weekly
 \`\`\`
 
 ## Why This Matters
 
-Perfect for AI assistants, dynamic content creation, and progressive web applications where immediate user engagement is crucial.`;
+- **Type Locking**: Once a widget type is detected, it stays locked to prevent component switching
+- **Progressive Rendering**: Partial content renders with skeleton placeholders
+- **Graceful Degradation**: Incomplete arrays/quotes are auto-completed for preview
+- **DSL Compatibility**: Handles AI output variations like comma-separated arrays`;
 
 	function handleWidgetEvent(event: CustomEvent<{id: string, value: unknown}>) {
 		const timestamp = new Date().toLocaleTimeString();

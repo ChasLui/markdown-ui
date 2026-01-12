@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseDSL } from './parser.js';
+import { parseDSL, parseDSLStreaming } from './parser.js';
 
 describe('DSL Parser', () => {
   describe('text-input', () => {
@@ -344,6 +344,209 @@ not indented
         choices: ['Chicago', 'New York'],
         default: 'New York'
       });
+    });
+  });
+
+  describe('AI output compatibility - array syntax variations', () => {
+    it('handles comma-separated arrays ["a","b","c"]', () => {
+      const result = parseDSL('button-group env ["dev","staging","prod"]');
+      expect(result.success).toBe(true);
+      expect(result.widget).toEqual({
+        type: 'button-group',
+        id: 'env',
+        choices: ['dev', 'staging', 'prod']
+      });
+    });
+
+    it('handles comma-space separated arrays ["a", "b", "c"]', () => {
+      const result = parseDSL('select region ["us-east", "us-west", "eu-west"]');
+      expect(result.success).toBe(true);
+      expect(result.widget).toEqual({
+        type: 'select',
+        id: 'region',
+        choices: ['us-east', 'us-west', 'eu-west']
+      });
+    });
+
+    it('handles unquoted comma-separated arrays [a,b,c]', () => {
+      const result = parseDSL('button-group size [small,medium,large]');
+      expect(result.success).toBe(true);
+      expect(result.widget).toEqual({
+        type: 'button-group',
+        id: 'size',
+        choices: ['small', 'medium', 'large']
+      });
+    });
+
+    it('handles single quotes [\'a\',\'b\',\'c\']', () => {
+      const result = parseDSL("button-group lang ['en','zh','ja']");
+      expect(result.success).toBe(true);
+      expect(result.widget).toEqual({
+        type: 'button-group',
+        id: 'lang',
+        choices: ['en', 'zh', 'ja']
+      });
+    });
+
+    it('handles mixed quoted and unquoted with commas', () => {
+      const result = parseDSL('select loc [home, "New York", office]');
+      expect(result.success).toBe(true);
+      expect(result.widget).toEqual({
+        type: 'select',
+        id: 'loc',
+        choices: ['home', 'New York', 'office']
+      });
+    });
+
+    it('handles arrays in quiz mcq questions with comma syntax', () => {
+      const input = `quiz test "Test Quiz"
+mcq q1 "Question?" 10 ["A","B","C"] A`;
+      const result = parseDSL(input);
+      expect(result.success).toBe(true);
+      expect((result.widget as any).questions[0].choices).toEqual(['A', 'B', 'C']);
+    });
+  });
+});
+
+describe('Streaming Parser', () => {
+  describe('widget type detection', () => {
+    it('detects quiz type from partial input', () => {
+      const result = parseDSLStreaming('quiz');
+      expect(result.complete).toBe(false);
+      expect(result.detectedType).toBe('quiz');
+    });
+
+    it('detects button-group type', () => {
+      const result = parseDSLStreaming('button-group env');
+      expect(result.detectedType).toBe('button-group');
+    });
+
+    it('returns error for unknown type', () => {
+      const result = parseDSLStreaming('unknown-widget id');
+      expect(result.complete).toBe(false);
+      expect(result.error).toContain('Unknown widget type');
+    });
+  });
+
+  describe('unclosed bracket handling', () => {
+    it('detects unclosed bracket in button-group', () => {
+      const result = parseDSLStreaming('button-group env [dev staging');
+      expect(result.complete).toBe(false);
+      expect(result.pending?.unclosedBracket).toBe(true);
+      expect(result.detectedType).toBe('button-group');
+    });
+
+    it('auto-completes array and returns partial widget', () => {
+      const result = parseDSLStreaming('button-group env [dev staging prod');
+      expect(result.complete).toBe(false);
+      expect(result.widget?.type).toBe('button-group');
+      // Should have parsed the partial choices
+      expect((result.widget as any).choices).toEqual(['dev', 'staging', 'prod']);
+    });
+
+    it('detects unclosed quote', () => {
+      const result = parseDSLStreaming('text-input id "Label with');
+      expect(result.complete).toBe(false);
+      expect(result.pending?.unclosedQuote).toBe(true);
+    });
+  });
+
+  describe('partial quiz parsing', () => {
+    it('parses quiz header only', () => {
+      const result = parseDSLStreaming('quiz math "Math Quiz"');
+      expect(result.complete).toBe(false);
+      expect(result.detectedType).toBe('quiz');
+      expect(result.widget?.type).toBe('quiz');
+      expect((result.widget as any).title).toBe('Math Quiz');
+      expect(result.pending?.awaitingQuestions).toBe(true);
+    });
+
+    it('parses quiz with config but no questions', () => {
+      const input = `quiz math "Math Quiz"
+showScore: true
+showProgress: false`;
+      const result = parseDSLStreaming(input);
+      expect(result.complete).toBe(false);
+      expect((result.widget as any).showScore).toBe(true);
+      expect((result.widget as any).showProgress).toBe(false);
+      expect(result.pending?.awaitingQuestions).toBe(true);
+    });
+
+    it('parses quiz with partial mcq question', () => {
+      const input = `quiz math "Math Quiz"
+mcq q1 "What is 2+2?" 10 [3 4`;
+      const result = parseDSLStreaming(input);
+      expect(result.complete).toBe(false);
+      expect(result.pending?.unclosedBracket).toBe(true);
+      const questions = (result.widget as any).questions;
+      expect(questions.length).toBe(1);
+      expect(questions[0].question).toBe('What is 2+2?');
+      expect(questions[0].choices).toEqual(['3', '4']);
+    });
+
+    it('parses quiz with complete question', () => {
+      const input = `quiz math "Math Quiz"
+mcq q1 "What is 2+2?" 10 [3 4 5] 4`;
+      const result = parseDSLStreaming(input);
+      // Still incomplete because normal parser requires at least one question to succeed
+      // but streaming parser provides partial data
+      expect(result.widget?.type).toBe('quiz');
+      const questions = (result.widget as any).questions;
+      expect(questions.length).toBe(1);
+      expect(questions[0].correctAnswer).toBe('4');
+    });
+
+    it('parses partial short-answer question', () => {
+      const input = `quiz math "Math Quiz"
+short-answer q1 "What is the capital of France?" 10`;
+      const result = parseDSLStreaming(input);
+      const questions = (result.widget as any).questions;
+      expect(questions.length).toBe(1);
+      expect(questions[0].type).toBe('short-answer');
+      expect(questions[0].question).toBe('What is the capital of France?');
+    });
+  });
+
+  describe('complete parsing', () => {
+    it('returns complete=true for valid complete input', () => {
+      const result = parseDSLStreaming('text-input myId "Label" "Placeholder"');
+      expect(result.complete).toBe(true);
+      expect(result.widget?.type).toBe('text-input');
+    });
+
+    it('returns complete=true for valid button-group', () => {
+      const result = parseDSLStreaming('button-group env [dev staging prod]');
+      expect(result.complete).toBe(true);
+      expect((result.widget as any).choices).toEqual(['dev', 'staging', 'prod']);
+    });
+  });
+
+  describe('streaming simulation', () => {
+    it('handles progressive quiz input', () => {
+      const stages = [
+        'quiz',
+        'quiz math',
+        'quiz math "Math',
+        'quiz math "Math Quiz"',
+        'quiz math "Math Quiz"\nmcq',
+        'quiz math "Math Quiz"\nmcq q1',
+        'quiz math "Math Quiz"\nmcq q1 "Question?"',
+        'quiz math "Math Quiz"\nmcq q1 "Question?" 10',
+        'quiz math "Math Quiz"\nmcq q1 "Question?" 10 [A',
+        'quiz math "Math Quiz"\nmcq q1 "Question?" 10 [A B',
+        'quiz math "Math Quiz"\nmcq q1 "Question?" 10 [A B C]',
+        'quiz math "Math Quiz"\nmcq q1 "Question?" 10 [A B C] A',
+      ];
+
+      for (const input of stages) {
+        const result = parseDSLStreaming(input);
+        // Should never throw
+        expect(result.detectedType).toBe('quiz');
+      }
+
+      // Final stage should have complete question data
+      const final = parseDSLStreaming(stages[stages.length - 1]);
+      expect((final.widget as any).questions[0].choices).toEqual(['A', 'B', 'C']);
     });
   });
 });
