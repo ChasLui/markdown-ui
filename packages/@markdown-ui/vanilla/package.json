@@ -1,0 +1,39 @@
+{
+  "name": "@markdown-ui/vanilla",
+  "version": "0.1.0",
+  "description": "Vanilla JS renderer for markdown-ui",
+  "type": "module",
+  "main": "./dist/index.umd.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.umd.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./widgets.css": "./dist/widgets.css"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && vite build && cp src/styles/widgets.css dist/",
+    "dev": "vite build --watch",
+    "prepublishOnly": "npm run build",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "vanilla",
+    "javascript",
+    "markdown",
+    "widgets",
+    "ui"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {},
+  "publishConfig": {
+    "access": "public"
+  }
+}
