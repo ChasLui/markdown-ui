@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Markdown UI Vanilla - Test</title>
+  <link rel="stylesheet" href="./dist/widgets.css">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 800px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+    }
+    h1 { color: #1f2937; }
+    h2 { color: #374151; margin-top: 2rem; }
+    #events {
+      margin-top: 2rem;
+      padding: 1rem;
+      background: #f3f4f6;
+      border-radius: 8px;
+      font-family: monospace;
+      font-size: 0.875rem;
+    }
+    #events h3 { margin-top: 0; }
+    .event-log {
+      max-height: 200px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>Markdown UI Vanilla - Test Page</h1>
+
+  <div id="content">
+    <h2>Button Group</h2>
+    <markdown-ui-widget
+      id="env"
+      content="%7B%22type%22%3A%22button-group%22%2C%22label%22%3A%22Environment%22%2C%22choices%22%3A%5B%22dev%22%2C%22staging%22%2C%22prod%22%5D%2C%22default%22%3A%22dev%22%7D">
+    </markdown-ui-widget>
+
+    <h2>Text Input</h2>
+    <markdown-ui-widget
+      id="name"
+      content="%7B%22type%22%3A%22text-input%22%2C%22label%22%3A%22Your%20Name%22%2C%22placeholder%22%3A%22Enter%20your%20name%22%2C%22default%22%3A%22%22%7D">
+    </markdown-ui-widget>
+
+    <h2>Select</h2>
+    <markdown-ui-widget
+      id="region"
+      content="%7B%22type%22%3A%22select%22%2C%22label%22%3A%22Region%22%2C%22choices%22%3A%5B%22US%20East%22%2C%22US%20West%22%2C%22Europe%22%2C%22Asia%22%5D%2C%22default%22%3A%22US%20East%22%7D">
+    </markdown-ui-widget>
+
+    <h2>Select Multi</h2>
+    <markdown-ui-widget
+      id="features"
+      content="%7B%22type%22%3A%22select-multi%22%2C%22label%22%3A%22Features%22%2C%22choices%22%3A%5B%22Docker%22%2C%22Kubernetes%22%2C%22Monitoring%22%2C%22Logging%22%5D%2C%22default%22%3A%5B%22Docker%22%5D%7D">
+    </markdown-ui-widget>
+
+    <h2>Slider</h2>
+    <markdown-ui-widget
+      id="cpu"
+      content="%7B%22type%22%3A%22slider%22%2C%22label%22%3A%22CPU%20Cores%22%2C%22min%22%3A1%2C%22max%22%3A32%2C%22step%22%3A1%2C%22default%22%3A4%7D">
+    </markdown-ui-widget>
+
+    <h2>Form</h2>
+    <markdown-ui-widget
+      id="deploy-form"
+      content="%7B%22type%22%3A%22form%22%2C%22submitLabel%22%3A%22Deploy%22%2C%22fields%22%3A%5B%7B%22type%22%3A%22text-input%22%2C%22id%22%3A%22app-name%22%2C%22label%22%3A%22App%20Name%22%2C%22placeholder%22%3A%22my-app%22%7D%2C%7B%22type%22%3A%22select%22%2C%22id%22%3A%22env%22%2C%22label%22%3A%22Environment%22%2C%22choices%22%3A%5B%22Development%22%2C%22Production%22%5D%7D%2C%7B%22type%22%3A%22slider%22%2C%22id%22%3A%22replicas%22%2C%22label%22%3A%22Replicas%22%2C%22min%22%3A1%2C%22max%22%3A10%2C%22default%22%3A3%7D%5D%7D">
+    </markdown-ui-widget>
+  </div>
+
+  <div id="events">
+    <h3>Event Log</h3>
+    <div class="event-log" id="event-log"></div>
+  </div>
+
+  <script src="./dist/index.umd.js"></script>
+  <script>
+    const eventLog = document.getElementById('event-log');
+
+    function logEvent(detail) {
+      const entry = document.createElement('div');
+      entry.textContent = `[${new Date().toLocaleTimeString()}] Widget "${detail.id}": ${JSON.stringify(detail.value)}`;
+      eventLog.insertBefore(entry, eventLog.firstChild);
+    }
+
+    // Initialize MarkdownUI
+    const mdui = MarkdownUIVanilla.MarkdownUI.init('#content', {
+      onWidgetEvent: (e) => {
+        console.log('Widget event:', e.detail);
+        logEvent(e.detail);
+      }
+    });
+
+    console.log('MarkdownUI Vanilla initialized!');
+  </script>
+</body>
+</html>
